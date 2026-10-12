@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Kinder-Kasse</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#fff6dd;--card:#fff;--ink:#2b2b3a;--accent:#ff5a5f;--ok:#2bb673}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1f2033;--card:#2c2e48;--ink:#fff;--accent:#ff7a7f;--ok:#43d68c}}
+:root[data-theme="dark"]{--bg:#1f2033;--card:#2c2e48;--ink:#fff;--accent:#ff7a7f;--ok:#43d68c}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:"Trebuchet MS",system-ui,sans-serif}
+main{max-width:480px;margin:0 auto;padding:16px}
+h1{text-align:center;margin:4px 0 12px;font-size:1.8rem}
+.cam{position:relative;border-radius:24px;overflow:hidden;background:#000;aspect-ratio:4/3;border:6px solid var(--accent)}
+video{width:100%;height:100%;object-fit:cover}
+.line{position:absolute;left:8%;right:8%;top:50%;height:3px;background:red;box-shadow:0 0 8px red;animation:s 1.6s infinite alternate}
+@keyframes s{from{top:25%}to{top:75%}}
+.flash{position:absolute;inset:0;background:var(--ok);opacity:0;pointer-events:none;transition:opacity .4s}
+.flash.on{opacity:.6;transition:none}
+button{font:inherit;font-size:1.2rem;font-weight:bold;border:0;border-radius:18px;padding:14px 20px;background:var(--accent);color:#fff;width:100%;margin-top:12px}
+#msg{text-align:center;margin:10px 0;min-height:1.4em}
+.bon{background:var(--card);border-radius:16px;padding:12px 16px;margin-top:12px}
+.row{display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-bottom:1px dashed #8884;font-size:1rem}
+.row span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sum{display:flex;justify-content:space-between;font-size:1.4rem;font-weight:bold;margin-top:8px}
+</style>
+</head>
+<body>
+<main>
+<h1>🛒 Kinder-Kasse</h1>
+<div class="cam"><video id="v" playsinline muted></video><div class="line"></div><div class="flash" id="f"></div></div>
+<div id="msg">Tippe auf Start und halte einen Strichcode vor die Kamera!</div>
+<button id="start">📷 Start (Live-Kamera)</button>
+<button id="snap" style="background:var(--ok)">📸 Foto-Modus (klappt immer)</button>
+<input type="file" id="file" accept="image/*" capture="environment" style="display:none">
+<div class="bon">
+<div id="list"></div>
+<div class="sum"><span>Summe</span><span id="sum">0,00 €</span></div>
+<button id="clear" style="background:#888;font-size:1rem;padding:10px">🗑️ Neuer Einkauf</button>
+</div>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
+<script>
+var ctx=null,last="",lastT=0,total=0,v=document.getElementById("v"),msg=document.getElementById("msg");
+var items=["🍎 Apfel","🥛 Milch","🍞 Brot","🧀 Käse","🍌 Banane","🍫 Schokolade","🧃 Saft","🍝 Nudeln","🥕 Möhren","🍪 Kekse"];
+function beep(){
+  try{
+    ctx=ctx||new (window.AudioContext||window.webkitAudioContext)();
+    var o=ctx.createOscillator(),g=ctx.createGain();
+    o.type="square";o.frequency.value=1800;
+    g.gain.setValueAtTime(.25,ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(.001,ctx.currentTime+.18);
+    o.connect(g);g.connect(ctx.destination);o.start();o.stop(ctx.currentTime+.18);
+  }catch(e){}
+  try{navigator.vibrate&&navigator.vibrate(60)}catch(e){}
+}
+function hash(s){var h=0;for(var i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))>>>0;return h}
+function found(code){
+  var n=Date.now();
+  if(code===last&&n-lastT<1800){lastT=n;return}
+  last=code;lastT=n;
+  beep();
+  var f=document.getElementById("f");f.classList.add("on");setTimeout(function(){f.classList.remove("on")},80);
+  var h=hash(code),name=items[h%items.length],cents=50+(h%950);
+  total+=cents;
+  var r=document.createElement("div");r.className="row";
+  r.innerHTML="<span></span><span></span>";
+  r.children[0].textContent=name;
+  r.children[1].textContent=(cents/100).toFixed(2).replace(".",",")+" €";
+  var l=document.getElementById("list");l.insertBefore(r,l.firstChild);
+  document.getElementById("sum").textContent=(total/100).toFixed(2).replace(".",",")+" €";
+  msg.textContent="✅ Piep! "+name;
+}
+document.getElementById("clear").onclick=function(){document.getElementById("list").innerHTML="";total=0;document.getElementById("sum").textContent="0,00 €";last=""};
+document.getElementById("snap").onclick=function(){document.getElementById("file").click()};
+document.getElementById("file").onchange=async function(e){
+  var fl=e.target.files[0];if(!fl)return;
+  msg.textContent="Suche Strichcode …";
+  var url=URL.createObjectURL(fl),code=null;
+  try{
+    if("BarcodeDetector" in window){
+      var bmp=await createImageBitmap(fl);
+      var res=await new BarcodeDetector().detect(bmp);
+      if(res.length)code=res[0].rawValue;
+    }
+    if(!code){
+      var r=await new ZXing.BrowserMultiFormatReader().decodeFromImageUrl(url);
+      code=r.getText();
+    }
+  }catch(err){}
+  URL.revokeObjectURL(url);
+  e.target.value="";
+  if(code){last="";found(code)}else{msg.textContent="Kein Strichcode erkannt. Nochmal näher ran und scharf stellen!"}
+};
+document.getElementById("start").onclick=async function(){
+  beep();
+  msg.textContent="Kamera wird gestartet …";
+  try{
+    if("BarcodeDetector" in window){
+      var stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"},audio:false});
+      v.srcObject=stream;await v.play();
+      var det=new BarcodeDetector();
+      (async function loop(){
+        try{var res=await det.detect(v);if(res.length)found(res[0].rawValue)}catch(e){}
+        setTimeout(loop,150);
+      })();
+    }else{
+      var rd=new ZXing.BrowserMultiFormatReader();
+      rd.decodeFromConstraints({video:{facingMode:"environment"},audio:false},v,function(r){if(r)found(r.getText())});
+    }
+    msg.textContent="Halte einen Strichcode ins Bild 👆";
+  }catch(e){
+    msg.textContent="Live-Kamera nicht möglich. Nimm den grünen Foto-Modus-Knopf!";
+  }
+};
+</script>
+</body>
+</html>
